@@ -1,41 +1,91 @@
 #!/bin/bash
 
+LOGS_FOLDER="var/log/roboshop"
+sudo mkdir -p $LOGS_FOLDER
+sudo chown -R ec2-user:ec2-user $LOGS_FOLDER
+sudo chmod -R 755 $LOGS_FOLDER
+LOGS_FILE="$LOGS_FOLDER/$0.log"
 
- LOGS_FOLDER="var/log/roboshop"
- sudo mkdir -p $LOGS_FOLDER
- sudo chown -R ec2-user:ec2-user $LOGS_FOLDER
- sudo chmod -R 755 $LOGS_FOLDER
- LOGS_FILE="$LOGS_FOLDER/$0.log"
-
- USER_ID=$(id -u)
- R="\e[31m"
- G="\e[32m"
- Y="\e[33m"
- N="\e[0m"
- TIMESTAMP=$(date "+%y-%m-%d %H:%M:%S")
+USER_ID=$(id -u)
+R="\e[31m"
+G="\e[32m"
+Y="\e[33m"
+N="\e[0m"
+TIMESTAMP=$(date "+%y-%m-%d %H:%M:%S")
  
- echo -e "$TIMESTAMP [INFO] scripted started"
+echo -e "$TIMESTAMP [INFO] scripted started"
 
 
- check_root(){
+check_root(){
    if [ $USER_ID -ne 0 ]; then
      echo -e "$TIMESTAMP [ERROR] $R please run this script with root access $N" | tee -a $LOGS_FILE
      exit 1
-    fi
+   fi
+  }
+
+
+VALIDATE() {
+if [ $1 -ne 0 ]; then
+   echo -e "$TIMESTAMP [ERROR] $2 ... $R FAILURE $N" | tee -a $LOGS_FILE
+   exit 1
+   }
+else
+   echo -e "$TIMESTAMP [INFO] $2 ... $G SUCCESS $N" | tee -a $LOGS_FILE
+fi
+
+ 
+
+print_total_time(){
+   echo -e $TIMESTAMP [INFO] script executed in $G $SECONDS seconds $N
+
  }
 
+ 
 
- VALIDATE() {
- if [ $1 -ne 0 ]; then
-    echo -e "$TIMESTAMP [ERROR] $2 ... $R FAILURE $N" | tee -a $LOGS_FILE
-    exit 1
- else
-    echo -e "$TIMESTAMP [INFO] $2 ... $G SUCCESS $N" | tee -a $LOGS_FILE
- fi
+app_setup(){
+   id roboshop &>>$LOGS_FILE
+   if [ $? -ne 0 ]; then
+      useradd --system --home /app --shell /sbin/nologin --comment "roboshop system user" roboshop
+      VALIDATE $? "Creating roboshop user"
+   else
+      echo -e "system user roboshop already created ... $Y skipping $N"
+   fi
 
+   rm -rf /app &>>$LOGS_FILE
+   VALIDATE $? "Removing existing code"
+
+   rm -rf /tmp/$app_name.zip 
+   VALIDATE $? "Removing $app_name zip"
+
+   mkdir -p /app &>>$LOGS_FILE
+   VALIDATE $? "Creating app directory"
+
+   curl -o /tmp/$app_name.zip https://roboshop-artifacts.s3.amazonaws.com/$app_name-v3.zip 
+   cd /app 
+   unzip /tmp/$app_name.zip
+   VALIDATE $? "Downloading and extracting $app_name code"
  }
 
- print_total_time(){
-    echo -e $TIMESTAMP [INFO] script executed in $G $SECONDS seconds $N
+ nodejs_setup(){
+   dnf module disable nodejs -y &>>$LOGS_FILE
+   dnf module enable nodejs:20 -y &>>$LOGS_FILE
+   dnf install nodejs -y &>>$LOGS_FILE
+   VALIDATE $? "Installing nodejs:20"
+   npm install &>>$LOGS_FILE
+   VALIDATE $? "Installing catalogue dependencies"
+   }
 
- }
+systemd_setup(){
+   cp $SCRIPT_DIR/$app_name.service /etc/systemd/system/$app_name.service
+   VALIDATE $? "Created systemctl service"
+   systemctl deamon-reload
+   systemctl enable $app_name
+   VALIDATE $? "Enableing $app_name "
+   }
+    
+app_restart(){
+   systemctl restart $app_name
+   VALIDATE $? "Restarting $app_name"
+   }
+
+ 
